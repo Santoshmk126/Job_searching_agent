@@ -58,6 +58,17 @@ Dashboard (Streamlit, read-only)
 
 ---
 
+## NETWORK & SOURCES
+
+9. Every external source lives behind a Source class with a uniform interface. The Fetcher never contains source-specific parsing. Adding a source must never require editing the Fetcher.
+10. Every Source returns a list of normalised dicts with EXACTLY these keys: source, external_id, title, company, location, url, description, posted_at, raw. Missing values are None, never empty string, never "N/A".
+11. All network calls go through one helper with a timeout (10s default), explicit retry (2 attempts, exponential backoff), and a User-Agent header. No bare requests.get anywhere else in the codebase.
+12. A source failing must NEVER kill the cycle. Catch per-source, log the failure to cycle_log with status "failed", continue to the next source. One dead job board must not stop the other sources.
+13. Secrets come from environment variables via a .env file that is gitignored. Never a literal key in code, never a key in config.yaml. If a key is missing, that source skips itself with a clear log line — it does not crash the cycle.
+14. Respect the source. Rate limit to at most 1 request per second per source, set a real User-Agent, and honour any documented page limits.
+
+---
+
 ## Coding Style & Execution Guidelines
 
 - **Style**: Small, testable, modular functions. Plain, readable Python over clever/complex Python.

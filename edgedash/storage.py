@@ -6,35 +6,20 @@ from typing import Any
 
 _current_db_path: str = "edgedash.db"
 
-_SCHEMA = """
+_SCHEMA = '''
 CREATE TABLE IF NOT EXISTS listings (
-    id TEXT PRIMARY KEY,
-    title TEXT NOT NULL,
-    company TEXT NOT NULL,
-    location TEXT,
-    url TEXT NOT NULL,
-    description TEXT,
-    source TEXT NOT NULL,
-    posted_at TEXT,
-    fetched_at TEXT NOT NULL,
-    fit_score INTEGER,
-    fit_reason TEXT
+    id TEXT PRIMARY KEY, title TEXT NOT NULL, company TEXT NOT NULL,
+    location TEXT, url TEXT NOT NULL, description TEXT, source TEXT NOT NULL,
+    posted_at TEXT, fetched_at TEXT NOT NULL, fit_score INTEGER, fit_reason TEXT
 );
 CREATE TABLE IF NOT EXISTS skill_gaps (
-    skill TEXT PRIMARY KEY,
-    frequency INTEGER NOT NULL DEFAULT 1,
-    last_seen TEXT NOT NULL
+    skill TEXT PRIMARY KEY, frequency INTEGER NOT NULL DEFAULT 1, last_seen TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS cycle_log (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    agent TEXT NOT NULL,
-    started_at TEXT NOT NULL,
-    finished_at TEXT NOT NULL,
-    records_touched INTEGER NOT NULL,
-    status TEXT NOT NULL,
-    notes TEXT
+    id INTEGER PRIMARY KEY AUTOINCREMENT, agent TEXT NOT NULL, started_at TEXT NOT NULL,
+    finished_at TEXT NOT NULL, records_touched INTEGER NOT NULL, status TEXT NOT NULL, notes TEXT
 );
-"""
+'''
 
 
 def _get_connection(db_path: str | None = None) -> sqlite3.Connection:
@@ -120,3 +105,38 @@ def get_listings(
     params.append(limit)
     with _get_connection(db_path) as conn:
         return [dict(row) for row in conn.execute(query, tuple(params)).fetchall()]
+
+
+def get_diagnostics(db_path: str | None = None) -> dict[str, Any]:
+    with _get_connection(db_path) as conn:
+        total = int(conn.execute("SELECT COUNT(*) FROM listings").fetchone()[0])
+        per_src = {
+            r[0]: int(r[1])
+            for r in conn.execute("SELECT source, COUNT(*) FROM listings GROUP BY source ORDER BY COUNT(*) DESC").fetchall()
+        }
+        dupes_sql = """
+        SELECT LOWER(TRIM(title)) AS title, LOWER(TRIM(company)) AS company,
+               COUNT(DISTINCT source) AS src_count, COUNT(*) AS total_count
+        FROM listings GROUP BY LOWER(TRIM(title)), LOWER(TRIM(company))
+        HAVING COUNT(DISTINCT source) > 1
+        """
+        cross_dupes = [dict(r) for r in conn.execute(dupes_sql).fetchall()]
+        recent_sql = """
+        SELECT source, title, company, location, posted_at, fetched_at
+        FROM listings ORDER BY fetched_at DESC, posted_at DESC LIMIT 5
+        """
+        recent = [dict(r) for r in conn.execute(recent_sql).fetchall()]
+        quality_sql = """
+        SELECT id, source, title, company, url FROM listings
+        WHERE url IS NULL OR TRIM(url) = ''
+           OR title IS NULL OR TRIM(title) = ''
+           OR company IS NULL OR TRIM(company) = ''
+        """
+        quality = [dict(r) for r in conn.execute(quality_sql).fetchall()]
+        return {
+            "total_listings": total,
+            "per_source": per_src,
+            "cross_source_duplicates": cross_dupes,
+            "recent_listings": recent,
+            "quality_issues": quality,
+        }

@@ -29,3 +29,8 @@ my_skills:
 experience_years: 1
 db_path: "edgedash.db"
 min_fit_score: 70
+
+sources:
+  - "arbeitnow"
+  # - "apify"  # Note: requires APIFY_TOKEN set in .env
+use_mock_fetcher: false
