@@ -43,18 +43,26 @@ EdgeDash is an autonomous career intelligence loop designed to run on a daily sc
 
 ---
 
-## Current Status
+## Implementation Status
 
-- [x] **Week 1 (Current)**:
-  - Configuration loader and schema (`edgedash/config.py`, `config.yaml`)
-  - Isolated SQLite storage interface (`edgedash/storage.py`)
-  - Agent interface protocol (`edgedash/agents/base.py`)
-  - Temporary mock fetcher for testing and dedup validation (`edgedash/agents/mock_fetcher.py` - temporary)
-  - Orchestrator loop with plan generation and cycle logging (`edgedash/orchestrator.py`)
+- [x] **Core Architecture & Storage**:
+  - Configuration loader & schema validation (`edgedash/config.py`, `config.yaml`)
+  - Isolated SQLite storage interface with SHA-256 deduplication (`edgedash/storage.py`)
+  - Unified agent contract protocol (`edgedash/agents/base.py`)
+  - Mock fetcher for testing and dedup verification (`edgedash/agents/mock_fetcher.py` - temporary)
+  - Orchestrator loop with state inspection & cycle telemetry (`edgedash/orchestrator.py`)
   - Single-cycle CLI runner (`run_cycle.py`)
-- [ ] **Week 2**: Real job board fetcher integration, schema normalizer, and output Verifier.
-- [ ] **Week 3**: AI candidate fit scorer and skill gap analysis agent.
-- [ ] **Week 4**: Read-only Streamlit dashboard, automated scheduled trigger, and PostgreSQL storage migration.
+- [ ] **Live Ingestion & Verification**:
+  - Real job board fetcher integration
+  - Schema normalizer & deduplication pipeline
+  - Output integrity Verifier agent
+- [ ] **Scoring & Skill Gap Analysis**:
+  - AI candidate fit scorer
+  - Skill gap analysis agent & frequency tracker
+- [ ] **Dashboard & Automation**:
+  - Read-only Streamlit dashboard
+  - Automated scheduled 6 AM trigger
+  - Hosted PostgreSQL storage migration
 
 ---
 
