@@ -69,6 +69,18 @@ Dashboard (Streamlit, read-only)
 
 ---
 
+## INTELLIGENCE & SCORING
+
+15. All LLM calls go through one module, edgedash/llm.py, exposing one function. The provider and model name come from config, never hardcoded. Rate limit to stay inside a free tier (default 1 request per second, max 15 per minute). No other file imports an LLM SDK.
+16. NEVER ask a model for a final score, ranking, or numeric rating. The model extracts structured facts only. All scoring arithmetic is deterministic Python in ONE function. The model never sees the scoring weights.
+17. Every model response is validated against an explicit schema before use. A response that fails validation is retried once, then logged as a failure for THAT listing only — it must not crash the cycle or stop the remaining listings. Never json.loads raw model text without a validation and repair path.
+18. Scoring is idempotent. Never re-score a listing that already has a score. Select only listings WHERE score IS NULL. Cache extraction results keyed on a hash of the job description so the same text is never sent to the model twice.
+19. Every score carries a human-readable reason GENERATED FROM THE SCORE COMPONENTS by our code — never free text written by the model.
+20. Log the score distribution (count, min, max, mean, spread) to cycle_log on every scoring run. A run where all scores fall within 10 points is a suspect run and must be logged as such.
+21. Cap listings scored per cycle at a configurable batch size (default 25) so a cost or rate-limit blowup is structurally impossible.
+
+---
+
 ## Coding Style & Execution Guidelines
 
 - **Style**: Small, testable, modular functions. Plain, readable Python over clever/complex Python.

@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from typing import Any
 from edgedash.agents.base import Agent, AgentResult
 from edgedash.agents.fetcher import Fetcher
+from edgedash.agents.scorer import Scorer
 from edgedash.agents.mock_fetcher import MockFetcher
 from edgedash.config import Config
 import edgedash.storage as storage
@@ -34,7 +35,7 @@ class PlaceholderGapAnalyzer(Agent):
 # Agent Registry: "fetcher" resolves to real Fetcher
 AGENT_REGISTRY: dict[str, type[Agent]] = {
     "fetcher": Fetcher,
-    "scorer": PlaceholderScorer,
+    "scorer": Scorer,
     "gap_analyzer": PlaceholderGapAnalyzer,
 }
 
@@ -56,7 +57,7 @@ def run_cycle(config: Config) -> None:
     print("-" * 70)
     print("[PLAN]")
     print("  1. fetcher      -> Fetch latest jobs and deduplicate against storage.")
-    print("  2. scorer       -> Evaluate fit score for unscored jobs (placeholder).")
+    print("  2. scorer       -> Evaluate fit score for unscored jobs.")
     print("  3. gap_analyzer -> Detect missing skills from job descriptions (placeholder).")
     print("-" * 70)
     print("[EXECUTION]")

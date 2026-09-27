@@ -34,3 +34,16 @@ sources:
   - "arbeitnow"
   # - "apify"  # Note: requires APIFY_TOKEN set in .env
 use_mock_fetcher: false
+
+# LLM Configuration (Rule 15)
+llm_provider: "gemini"
+llm_model: "gemini-3.1-flash-lite"
+
+# Scoring Settings (Rule 16 & Rule 21)
+target_seniority: "junior"
+score_batch_size: 25
+scoring_weights:
+  skill_match: 0.45
+  seniority_fit: 0.25
+  location_fit: 0.15
+  recency: 0.15

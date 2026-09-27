@@ -20,6 +20,16 @@ class Config:
     min_fit_score: int
     sources: list[str] = field(default_factory=lambda: ["arbeitnow"])
     use_mock_fetcher: bool = False
+    llm_provider: str = "gemini"
+    llm_model: str = "gemini-3.1-flash-lite"
+    target_seniority: str = "junior"
+    score_batch_size: int = 25
+    scoring_weights: dict[str, float] = field(default_factory=lambda: {
+        "skill_match": 0.45,
+        "seniority_fit": 0.25,
+        "location_fit": 0.15,
+        "recency": 0.15,
+    })
 
 
 def load_config(path: str | Path = "config.yaml") -> Config:
@@ -50,4 +60,14 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         min_fit_score=int(data.get("min_fit_score", 70)),
         sources=sources,
         use_mock_fetcher=use_mock_fetcher,
+        llm_provider=str(data.get("llm_provider", "gemini")),
+        llm_model=str(data.get("llm_model", "gemini-3.1-flash-lite")),
+        target_seniority=str(data.get("target_seniority", "junior")),
+        score_batch_size=int(data.get("score_batch_size", 25)),
+        scoring_weights=dict(data.get("scoring_weights", {
+            "skill_match": 0.45,
+            "seniority_fit": 0.25,
+            "location_fit": 0.15,
+            "recency": 0.15,
+        })),
     )
