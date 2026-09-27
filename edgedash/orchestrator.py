@@ -3,40 +3,16 @@ from typing import Any
 from edgedash.agents.base import Agent, AgentResult
 from edgedash.agents.fetcher import Fetcher
 from edgedash.agents.scorer import Scorer
+from edgedash.agents.gap_analyzer import GapAnalyzer
 from edgedash.agents.mock_fetcher import MockFetcher
 from edgedash.config import Config
 import edgedash.storage as storage
 
-
-class PlaceholderScorer(Agent):
-    name: str = "scorer"
-
-    def run(self, config: Config, storage_module: Any) -> AgentResult:
-        return AgentResult(
-            agent=self.name,
-            status="ok",
-            records_touched=0,
-            notes="Skipped (not implemented yet)",
-        )
-
-
-class PlaceholderGapAnalyzer(Agent):
-    name: str = "gap_analyzer"
-
-    def run(self, config: Config, storage_module: Any) -> AgentResult:
-        return AgentResult(
-            agent=self.name,
-            status="ok",
-            records_touched=0,
-            notes="Skipped (not implemented yet)",
-        )
-
-
-# Agent Registry: "fetcher" resolves to real Fetcher
+# Agent Registry: maps agent key to active Agent implementation
 AGENT_REGISTRY: dict[str, type[Agent]] = {
     "fetcher": Fetcher,
     "scorer": Scorer,
-    "gap_analyzer": PlaceholderGapAnalyzer,
+    "gap_analyzer": GapAnalyzer,
 }
 
 
@@ -58,7 +34,7 @@ def run_cycle(config: Config) -> None:
     print("[PLAN]")
     print("  1. fetcher      -> Fetch latest jobs and deduplicate against storage.")
     print("  2. scorer       -> Evaluate fit score for unscored jobs.")
-    print("  3. gap_analyzer -> Detect missing skills from job descriptions (placeholder).")
+    print("  3. gap_analyzer -> Detect and rank market skill gaps.")
     print("-" * 70)
     print("[EXECUTION]")
 

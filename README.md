@@ -4,6 +4,12 @@ EdgeDash is an autonomous career intelligence loop designed to run on a daily sc
 
 ---
 
+## Current Skill Gap Focus
+
+**Number One Gap**: **Kubernetes** (Opportunity Cost: 5.63 across 14 blocked listings) — Deploying a containerized ML serving pipeline on a local K3s cluster with Helm charts to bridge orchestration requirements for high-fit roles.
+
+---
+
 ## Architecture
 
 ```text

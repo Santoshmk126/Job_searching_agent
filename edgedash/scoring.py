@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from typing import Any
-from edgedash.normalizer import normalize_skill
+from edgedash.skills import canonical
 
 SENIORITY_BANDS: list[str] = ["junior", "mid", "senior", "lead"]
 DEFAULT_WEIGHTS: dict[str, float] = {
@@ -10,9 +10,10 @@ DEFAULT_WEIGHTS: dict[str, float] = {
 
 def _calculate_skill_match(facts: dict[str, Any], config: Any) -> tuple[float, str, list[str]]:
     raw_req, raw_nice = facts.get("required_skills", []), facts.get("nice_to_have", [])
-    req_skills = list(dict.fromkeys(normalize_skill(s) for s in raw_req if normalize_skill(s)))
-    nice_skills = list(dict.fromkeys(normalize_skill(s) for s in raw_nice if normalize_skill(s)))
-    user_skills = set(normalize_skill(s) for s in getattr(config, "my_skills", []) if normalize_skill(s))
+    aliases = getattr(config, "skill_aliases", {}) or {}
+    req_skills = list(dict.fromkeys(canonical(s, aliases) for s in raw_req if canonical(s, aliases)))
+    nice_skills = list(dict.fromkeys(canonical(s, aliases) for s in raw_nice if canonical(s, aliases)))
+    user_skills = set(canonical(s, aliases) for s in getattr(config, "my_skills", []) if canonical(s, aliases))
 
     matched_req = [s for s in req_skills if s in user_skills]
     missing_req = [s for s in req_skills if s not in user_skills]

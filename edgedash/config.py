@@ -30,6 +30,7 @@ class Config:
         "location_fit": 0.15,
         "recency": 0.15,
     })
+    skill_aliases: dict[str, str] = field(default_factory=dict)
 
 
 def load_config(path: str | Path = "config.yaml") -> Config:
@@ -70,4 +71,5 @@ def load_config(path: str | Path = "config.yaml") -> Config:
             "location_fit": 0.15,
             "recency": 0.15,
         })),
+        skill_aliases=dict(data.get("skill_aliases", {})),
     )

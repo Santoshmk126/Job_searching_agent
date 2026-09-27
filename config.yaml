@@ -47,3 +47,60 @@ scoring_weights:
   seniority_fit: 0.25
   location_fit: 0.15
   recency: 0.15
+
+# ==============================================================================
+# SKILL ALIASES MAP (Rule 23)
+# This map is MINE to edit and curate. Adding entries is expected as I see my own
+# data from `python -m edgedash.skills --audit`.
+# Never auto-merge skill names by model judgement or string similarity alone.
+# ==============================================================================
+skill_aliases:
+  k8s: "kubernetes"
+  kubernetes: "kubernetes"
+
+  # Keep node separate from javascript — they are different skills
+  js: "javascript"
+  javascript: "javascript"
+  node: "nodejs"
+  nodejs: "nodejs"
+  node.js: "nodejs"
+  "node js": "nodejs"
+
+  postgres: "postgres"
+  postgresql: "postgres"
+  psql: "postgres"
+
+  gcp: "gcp"
+  google cloud: "gcp"
+  google cloud platform: "gcp"
+
+  ml: "machine learning"
+  machine learning: "machine learning"
+
+  ci/cd: "ci/cd"
+  ci cd: "ci/cd"
+  cicd: "ci/cd"
+  ci-cd: "ci/cd"
+
+  # Common data/software roles
+  ts: "typescript"
+  typescript: "typescript"
+  py: "python"
+  python: "python"
+  sklearn: "scikit-learn"
+  scikit-learn: "scikit-learn"
+  scikitlearn: "scikit-learn"
+  "scikit learn": "scikit-learn"
+  aws: "aws"
+  amazon web services: "aws"
+  azure: "azure"
+  microsoft azure: "azure"
+  docker: "docker"
+  git: "git"
+  sql: "sql"
+  pandas: "pandas"
+  numpy: "numpy"
+  pytorch: "pytorch"
+  tensorflow: "tensorflow"
+  tf: "tensorflow"
+
