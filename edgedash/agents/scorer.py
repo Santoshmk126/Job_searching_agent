@@ -1,3 +1,4 @@
+import time
 from datetime import datetime, timezone
 from typing import Any
 from edgedash.agents.base import Agent, AgentResult
@@ -10,9 +11,24 @@ import edgedash.storage as storage
 class Scorer(Agent):
     name: str = "scorer"
 
-    def run(self, config: Config, storage_module: Any = storage) -> AgentResult:
+    def run(
+        self,
+        config: Config,
+        storage_module: Any = storage,
+        goal: str | None = None,
+        stop_conditions: dict[str, Any] | None = None,
+    ) -> AgentResult:
         store = storage_module or storage
-        batch_size = getattr(config, "score_batch_size", 25)
+        batch_size = (
+            stop_conditions.get("max_items")
+            if stop_conditions and "max_items" in stop_conditions
+            else getattr(config, "score_batch_size", 25)
+        )
+        max_seconds = (
+            stop_conditions.get("max_seconds")
+            if stop_conditions and "max_seconds" in stop_conditions
+            else getattr(config, "score_max_seconds", 60)
+        )
         unscored = store.get_unscored_listings(limit=batch_size, db_path=config.db_path)
 
         if not unscored:
@@ -28,7 +44,11 @@ class Scorer(Agent):
         cache_hits = 0
         cache_misses = 0
 
+        start_time = time.time()
         for listing in unscored:
+            if max_seconds and (time.time() - start_time) >= max_seconds:
+                print(f"[{self.name}] Stop condition reached: max_seconds={max_seconds}")
+                break
             lid = listing["id"]
             try:
                 from edgedash.agents.extractor import compute_description_hash

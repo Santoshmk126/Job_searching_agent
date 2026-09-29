@@ -11,7 +11,13 @@ from edgedash.storage import generate_listing_id
 class Fetcher(Agent):
     name: str = "fetcher"
 
-    def run(self, config: Config, storage_module: Any = storage) -> AgentResult:
+    def run(
+        self,
+        config: Config,
+        storage_module: Any = storage,
+        goal: str | None = None,
+        stop_conditions: dict[str, Any] | None = None,
+    ) -> AgentResult:
         store = storage_module or storage
         source_names = config.sources if config.sources else ["arbeitnow"]
         source_summaries: list[str] = []
@@ -38,6 +44,9 @@ class Fetcher(Agent):
             start_iso = datetime.now(timezone.utc).isoformat()
             try:
                 rows = src.fetch(config)
+                max_listings = stop_conditions.get("max_listings") if stop_conditions else getattr(config, "fetch_max_listings", None)
+                if max_listings is not None and len(rows) > max_listings:
+                    rows = rows[:max_listings]
                 for r in rows:
                     r["id"] = generate_listing_id(r["source"], r["url"])
 

@@ -191,3 +191,28 @@ def get_diagnostics(db_path: str | None = None) -> dict[str, Any]:
         recent = [dict(r) for r in conn.execute("SELECT source, title, company, location, posted_at, fetched_at FROM listings ORDER BY fetched_at DESC, posted_at DESC LIMIT 5").fetchall()]
         quality = [dict(r) for r in conn.execute("SELECT id, source, title, company, url FROM listings WHERE url IS NULL OR TRIM(url) = '' OR title IS NULL OR TRIM(title) = '' OR company IS NULL OR TRIM(company) = ''").fetchall()]
         return {"total_listings": total, "per_source": per_src, "cross_source_duplicates": cross_dupes, "recent_listings": recent, "quality_issues": quality}
+
+
+def latest_gap_snapshot_time(db_path: str | None = None) -> str | None:
+    with _get_connection(db_path) as conn:
+        res = conn.execute("SELECT MAX(computed_at) FROM skill_gaps").fetchone()
+        return str(res[0]) if (res and res[0] is not None) else None
+
+
+def has_scores_newer_than(iso_timestamp: str, db_path: str | None = None) -> bool:
+    with _get_connection(db_path) as conn:
+        res = conn.execute(
+            "SELECT 1 FROM listings WHERE fit_score IS NOT NULL AND scored_at > ? LIMIT 1",
+            (iso_timestamp,)
+        ).fetchone()
+        return bool(res)
+
+
+def last_cycle_info(db_path: str | None = None) -> tuple[str | None, str | None]:
+    with _get_connection(db_path) as conn:
+        res = conn.execute(
+            "SELECT status, finished_at FROM cycle_log ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        if res:
+            return str(res[0]), str(res[1])
+        return None, None

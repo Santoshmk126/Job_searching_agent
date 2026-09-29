@@ -31,6 +31,11 @@ class Config:
         "recency": 0.15,
     })
     skill_aliases: dict[str, str] = field(default_factory=dict)
+    fetch_interval_hours: float = 6.0
+    fetch_max_pages: int = 5
+    fetch_max_listings: int = 50
+    score_max_seconds: int = 60
+    analyse_max_seconds: int = 30
 
 
 def load_config(path: str | Path = "config.yaml") -> Config:
@@ -72,4 +77,9 @@ def load_config(path: str | Path = "config.yaml") -> Config:
             "recency": 0.15,
         })),
         skill_aliases=dict(data.get("skill_aliases", {})),
+        fetch_interval_hours=float(data.get("fetch_interval_hours", 6.0)),
+        fetch_max_pages=int(data.get("fetch_max_pages", 5)),
+        fetch_max_listings=int(data.get("fetch_max_listings", 50)),
+        score_max_seconds=int(data.get("score_max_seconds", 60)),
+        analyse_max_seconds=int(data.get("analyse_max_seconds", 30)),
     )

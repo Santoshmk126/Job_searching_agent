@@ -88,8 +88,17 @@ class MockFetcher(Agent):
 
         return stable_listings + dynamic_listings
 
-    def run(self, config: Config, storage: Any) -> AgentResult:
+    def run(
+        self,
+        config: Config,
+        storage: Any,
+        goal: str | None = None,
+        stop_conditions: dict[str, Any] | None = None,
+    ) -> AgentResult:
         listings = self._generate_listings(config)
+        max_listings = stop_conditions.get("max_listings") if stop_conditions else getattr(config, "fetch_max_listings", None)
+        if max_listings is not None and len(listings) > max_listings:
+            listings = listings[:max_listings]
         new_count = storage.upsert_listings(listings, db_path=config.db_path)
         dupe_count = len(listings) - new_count
         return AgentResult(

@@ -85,7 +85,13 @@ def compute_skill_gaps(
 class GapAnalyzer(Agent):
     name = "gap_analyzer"
 
-    def run(self, config: Config, storage_module: Any = storage) -> AgentResult:
+    def run(
+        self,
+        config: Config,
+        storage_module: Any = storage,
+        goal: str | None = None,
+        stop_conditions: dict[str, Any] | None = None,
+    ) -> AgentResult:
         scored = storage_module.get_scored_listings_with_facts(db_path=config.db_path)
         if not scored:
             return AgentResult(
