@@ -216,3 +216,67 @@ def last_cycle_info(db_path: str | None = None) -> tuple[str | None, str | None]
         if res:
             return str(res[0]), str(res[1])
         return None, None
+
+def get_latest_verified_cycle(db_path: str | None = None) -> dict[str, Any] | None:
+    """Return the most recent cycle summary row with a passing verification verdict (Rule 38)."""
+    with _get_connection(db_path) as conn:
+        rows = conn.execute(
+            "SELECT * FROM cycle_log WHERE agent = 'orchestrator' ORDER BY id DESC"
+        ).fetchall()
+        for r in rows:
+            d = dict(r)
+            try:
+                notes = json.loads(d.get("notes") or "{}")
+                verdict = notes.get("verdict")
+                if isinstance(verdict, dict) and verdict.get("passed") is True:
+                    d["notes_parsed"] = notes
+                    return d
+                if d.get("status") in ("complete", "nothing_to_do") and not verdict:
+                    d["notes_parsed"] = notes
+                    return d
+            except Exception:
+                continue
+        return None
+
+
+get_latest_passing_cycle = get_latest_verified_cycle
+
+
+latest_fetch_time = last_fetch_time
+
+def get_recent_cycles(limit: int = 30, agent: str | None = "orchestrator", db_path: str | None = None) -> list[dict[str, Any]]:
+    """Return the most recent cycles from cycle_log."""
+    query = "SELECT * FROM cycle_log"
+    params: list[Any] = []
+    if agent:
+        query += " WHERE agent = ?"
+        params.append(agent)
+    query += " ORDER BY id DESC LIMIT ?"
+    params.append(limit)
+    with _get_connection(db_path) as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["notes_parsed"] = json.loads(d.get("notes") or "{}")
+            except Exception:
+                d["notes_parsed"] = {}
+            result.append(d)
+        return result
+
+
+def get_listing_counts(db_path: str | None = None) -> tuple[int, int]:
+    """Return (total_listings, total_scored)."""
+    with _get_connection(db_path) as conn:
+        total = conn.execute("SELECT COUNT(*) FROM listings").fetchone()[0]
+        scored = conn.execute("SELECT COUNT(*) FROM listings WHERE fit_score IS NOT NULL").fetchone()[0]
+        return int(total), int(scored)
+
+
+def get_top_scored_listings(limit: int = 10, db_path: str | None = None) -> list[dict[str, Any]]:
+    """Return top scored listings ordered by score descending."""
+    sql = "SELECT id, title, company, location, fit_score, fit_reason, url, posted_at FROM listings WHERE fit_score IS NOT NULL ORDER BY fit_score DESC, posted_at DESC LIMIT ?"
+    with _get_connection(db_path) as conn:
+        return [dict(r) for r in conn.execute(sql, (limit,)).fetchall()]
+

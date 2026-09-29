@@ -36,6 +36,12 @@ class Config:
     fetch_max_listings: int = 50
     score_max_seconds: int = 60
     analyse_max_seconds: int = 30
+    min_score_spread: float = 10.0
+    min_score_stdev: float = 5.0
+    max_empty_extraction_pct: float = 0.20
+    max_skills_per_listing: int = 20
+    min_gap_sample: int = 3
+    max_data_age_days: float = 3.0
 
 
 def load_config(path: str | Path = "config.yaml") -> Config:
@@ -82,4 +88,10 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         fetch_max_listings=int(data.get("fetch_max_listings", 50)),
         score_max_seconds=int(data.get("score_max_seconds", 60)),
         analyse_max_seconds=int(data.get("analyse_max_seconds", 30)),
+        min_score_spread=float(data.get("min_score_spread", 10.0)),
+        min_score_stdev=float(data.get("min_score_stdev", 5.0)),
+        max_empty_extraction_pct=float(data.get("max_empty_extraction_pct", 0.20)),
+        max_skills_per_listing=int(data.get("max_skills_per_listing", 20)),
+        min_gap_sample=int(data.get("min_gap_sample", 3)),
+        max_data_age_days=float(data.get("max_data_age_days", 3.0)),
     )

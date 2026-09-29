@@ -95,6 +95,15 @@ def test_orchestrator_partial_on_agent_failure(mock_config):
 
 def test_orchestrator_complete_execution(mock_config):
     fixed_now = datetime(2026, 9, 29, 12, 0, 0, tzinfo=timezone.utc)
+    storage.upsert_listings([{
+        "title": "ML Eng", "company": "Co", "url": "https://a.com", "source": "src",
+        "fetched_at": "2026-09-29T11:00:00+00:00", "fit_score": 85, "fit_reason": "ok"
+    }], db_path=mock_config.db_path)
+    storage.save_skill_gaps_snapshot(
+        run_id="gap_1", computed_at="2026-09-29T11:05:00+00:00",
+        gaps=[{"skill": "k8s", "listings_blocked": 5, "opportunity_cost": 0.8, "mean_score": 80, "top_score": 80}],
+        db_path=mock_config.db_path
+    )
 
     class SuccessAgent(Agent):
         name = "success_agent"
@@ -119,7 +128,8 @@ def test_orchestrator_complete_execution(mock_config):
         assert len(rows) == 1
         summary = json.loads(rows[0]["notes"])
         assert summary["outcome"] == "complete"
-        assert summary["ran"] == ["success_agent"]
+        assert "success_agent" in summary["ran"]
+        assert "verifier" in summary["ran"]
         assert "fetcher" in summary["skipped"]
 
 
@@ -178,3 +188,64 @@ def test_explain_state_output(mock_config):
     assert "unscored_count" in text
     assert "45" in text
     assert "gaps_stale" in text
+
+
+def test_orchestrator_verification_retry_and_degraded(mock_config):
+    fixed_now = datetime(2026, 9, 29, 12, 0, 0, tzinfo=timezone.utc)
+    from edgedash.verification import CheckResult, Verdict
+
+    # Verifier that always fails
+    class AlwaysFailingVerifier(Agent):
+        name = "verifier"
+        def run(self, config, storage_mod, goal=None, stop_conditions=None, context=None):
+            fail_check = CheckResult("check_score_spread", False, {"spread": 2.0}, {"min_score_spread": 10.0}, "Score spread failed")
+            v = Verdict(passed=False, failed_checks=[fail_check], summary="Verification failed")
+            res = AgentResult(agent=self.name, status="failed", records_touched=0, notes="VERDICT: fail")
+            res.verdict = v
+            return res
+
+    retried = []
+    class MockScorer(Agent):
+        name = "scorer"
+        def run(self, config, storage_mod, goal=None, stop_conditions=None):
+            if stop_conditions and stop_conditions.get("stricter"):
+                retried.append(True)
+            return AgentResult(agent=self.name, status="ok", records_touched=5, notes="Scored")
+
+    plan = Plan(tasks=[Task(agent_name="scorer", goal="Score", stop_conditions={}, reason="test", skipped=False)])
+
+    with patch.dict(AGENT_REGISTRY, {"verifier": AlwaysFailingVerifier, "scorer": MockScorer}, clear=False):
+        with patch("edgedash.orchestrator.build_plan", return_value=plan):
+            outcome = run_cycle(mock_config, now=fixed_now)
+
+    # Must be marked degraded after exactly 1 retry and stop (Rule 36)
+    assert outcome == "degraded"
+    assert len(retried) == 1
+
+    with storage._get_connection(mock_config.db_path) as conn:
+        row = conn.execute("SELECT * FROM cycle_log WHERE agent = 'orchestrator' ORDER BY id DESC LIMIT 1").fetchone()
+        assert row["status"] == "degraded"
+        notes = json.loads(row["notes"])
+        assert notes["verdict"]["passed"] is False
+        assert notes["verdict"]["retry_count"] == 1
+        assert notes["verdict"]["failed_checks"][0]["name"] == "check_score_spread"
+
+
+def test_get_latest_verified_cycle(mock_config):
+    # Log a passing cycle
+    storage.log_cycle(
+        agent="orchestrator", started_at="2026-09-29T10:00:00Z", finished_at="2026-09-29T10:01:00Z",
+        records_touched=10, status="complete", notes=json.dumps({"verdict": {"passed": True, "status": "pass"}}),
+        db_path=mock_config.db_path
+    )
+    # Log a subsequent degraded cycle
+    storage.log_cycle(
+        agent="orchestrator", started_at="2026-09-29T11:00:00Z", finished_at="2026-09-29T11:01:00Z",
+        records_touched=10, status="degraded", notes=json.dumps({"verdict": {"passed": False, "status": "fail"}}),
+        db_path=mock_config.db_path
+    )
+
+    passing_cycle = storage.get_latest_verified_cycle(db_path=mock_config.db_path)
+    assert passing_cycle is not None
+    assert passing_cycle["status"] == "complete"
+    assert passing_cycle["started_at"] == "2026-09-29T10:00:00Z"

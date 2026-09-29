@@ -7,136 +7,126 @@ from edgedash.agents.fetcher import Fetcher
 from edgedash.agents.scorer import Scorer
 from edgedash.agents.gap_analyzer import GapAnalyzer
 from edgedash.agents.mock_fetcher import MockFetcher
+from edgedash.agents.verifier import Verifier
 from edgedash.config import Config
 from edgedash.planning import build_plan, Plan
 from edgedash.state import read_state, explain_state
 import edgedash.storage as storage
 
 AGENT_REGISTRY: dict[str, type[Agent]] = {
-    "fetcher": Fetcher,
-    "scorer": Scorer,
-    "gap_analyzer": GapAnalyzer,
-    "fetch": Fetcher,
-    "score": Scorer,
-    "analyse": GapAnalyzer,
+    "fetcher": Fetcher, "scorer": Scorer, "gap_analyzer": GapAnalyzer, "verifier": Verifier,
+    "fetch": Fetcher, "score": Scorer, "analyse": GapAnalyzer, "verify": Verifier,
 }
+FAIL_MAP = {"check_score_spread": "scorer", "check_extraction_sanity": "scorer",
+            "check_gap_sample_size": "gap_analyzer", "check_freshness": "fetcher"}
 
 
-def run_cycle(
-    config: Config,
-    now: datetime | None = None,
-    dry_run: bool = False,
-    force_agents: list[str] | None = None,
-    explain: bool = False,
-) -> str:
-    """State-driven autonomous orchestrator cycle (Rules 28-33)."""
-    start_cycle_iso = datetime.now(timezone.utc).isoformat()
+def run_cycle(config: Config, now: datetime | None = None, dry_run: bool = False,
+              force_agents: list[str] | None = None, explain: bool = False) -> str:
+    """State-driven autonomous orchestrator cycle with verification (Rules 28-39)."""
+    start_iso = datetime.now(timezone.utc).isoformat()
     storage.init_db(config.db_path)
+    eval_now = now or datetime.now(timezone.utc)
 
-    # 1. State inspection and planning (Rule 28)
-    evaluation_now = now or datetime.now(timezone.utc)
-    current_state = read_state(config, evaluation_now)
+    state = read_state(config, eval_now)
     if explain:
-        print(explain_state(current_state, config))
+        print(explain_state(state, config))
+    plan: Plan = build_plan(state, config)
 
-    plan: Plan = build_plan(current_state, config)
-
-    # 2. Apply manual agent overrides (--force)
-    overrides_applied: list[str] = []
+    overrides = []
     if force_agents:
-        for forced in force_agents:
-            forced_clean = forced.strip().lower()
-            for task in plan:
-                if task.agent_name == forced_clean and task.skipped:
-                    task.skipped = False
-                    task.reason = "forced by operator"
-                    overrides_applied.append(str(task.agent_name))
+        for f in force_agents:
+            fc = f.strip().lower()
+            for t in plan:
+                if t.agent_name == fc and t.skipped:
+                    t.skipped, t.reason = False, "forced by operator"
+                    overrides.append(str(t.agent_name))
+        if overrides:
+            print("=" * 70 + f"\n⚠️  WARNING: Manual override active. Forced: {', '.join(overrides)}")
 
-    if overrides_applied:
-        print("=" * 70)
-        print(f"⚠️  WARNING: Manual override active. Forced: {', '.join(overrides_applied)}")
-
-    # 3. Print rendered plan before executing (Rule 31)
-    print("=" * 70)
-    print("                      EDGEDASH ORCHESTRATOR PLAN")
-    print("=" * 70)
-    print(plan.render())
-    print("-" * 70)
-
-    # 4. Handle dry-run: exit without writes or execution
+    print("=" * 70 + "\n                      EDGEDASH ORCHESTRATOR PLAN\n" + "=" * 70)
+    print(plan.render() + "\n" + "-" * 70)
     if dry_run:
-        print("[DRY-RUN] Execution halted. No agents executed and no storage writes performed.")
-        print("=" * 70)
+        print("[DRY-RUN] Execution halted. No agents executed.\n" + "=" * 70)
         return "dry_run"
 
-    active_registry = dict(AGENT_REGISTRY)
+    active_reg = dict(AGENT_REGISTRY)
     if config.use_mock_fetcher:
-        active_registry["fetcher"] = MockFetcher
-        active_registry["fetch"] = MockFetcher
+        active_reg["fetcher"] = active_reg["fetch"] = MockFetcher
 
-    # 5. Execute unskipped tasks in order; pass goal & stop_conditions (Rule 29 & 32)
-    has_failure = False
-    durations: dict[str, float] = {}
-    ran_results: list[AgentResult] = []
-    total_records = 0
-
+    has_fail, durations, ran_results, total_recs = False, {}, [], 0
     for task in plan:
         if task.skipped:
             continue
-
-        agent_key = str(task.agent_name)
-        agent_cls = active_registry.get(agent_key)
-        if not agent_cls:
-            print(f" ! {agent_key:<14} [FAILED] -> Unregistered agent in registry")
-            has_failure = True
+        akey = str(task.agent_name)
+        cls_ = active_reg.get(akey)
+        if not cls_:
+            has_fail = True
             continue
-
-        agent = agent_cls()
         t0 = time.time()
         try:
-            result = agent.run(config, storage, goal=task.goal, stop_conditions=task.stop_conditions)
-            duration = round(time.time() - t0, 3)
-            durations[agent_key] = duration
-            ran_results.append(result)
-            total_records += result.records_touched
-            if result.status == "failed":
-                has_failure = True
-            print(f" * {agent_key:<14} [{result.status.upper()}] ({duration:.2f}s) -> {result.notes}")
+            res = cls_().run(config, storage, goal=task.goal, stop_conditions=task.stop_conditions)
+            durations[akey] = round(time.time() - t0, 3)
+            ran_results.append(res)
+            total_recs += res.records_touched
+            if res.status == "failed":
+                has_fail = True
+            print(f" * {akey:<14} [{res.status.upper()}] ({durations[akey]:.2f}s) -> {res.notes}")
         except Exception as exc:
-            duration = round(time.time() - t0, 3)
-            durations[agent_key] = duration
-            has_failure = True
-            print(f" ! {agent_key:<14} [FAILED] ({duration:.2f}s) -> {exc}")
+            durations[akey] = round(time.time() - t0, 3)
+            has_fail = True
+            print(f" ! {akey:<14} [FAILED] ({durations[akey]:.2f}s) -> {exc}")
 
-    # 6. Outcome determination: complete | partial | nothing_to_do (Rule 33)
     if all(t.skipped for t in plan):
         outcome = "nothing_to_do"
-    elif has_failure:
-        outcome = "partial"
+        verdict_dict = {"status": "pass", "passed": True, "failed_checks": [], "retry_count": 0}
     else:
-        outcome = "complete"
+        # Run Verifier after scorer and gap analyzer (Rule 34-36)
+        verifier = active_reg.get("verifier", Verifier)()
+        t0 = time.time()
+        vres = verifier.run(config, storage, context={"now": eval_now})
+        durations["verifier"] = round(time.time() - t0, 3)
+        ran_results.append(vres)
+        print(f" * verifier       [{vres.status.upper()}] ({durations['verifier']:.2f}s) -> {vres.notes}")
 
-    # Write single cycle summary row with overrides logged (Rule 33)
-    end_cycle_iso = datetime.now(timezone.utc).isoformat()
-    summary_data = {
-        "plan": plan.render(),
-        "ran": [r.agent for r in ran_results],
+        retries, v_obj = 0, getattr(vres, "verdict", None)
+        failed_checks = getattr(v_obj, "failed_checks", []) if v_obj else []
+
+        if vres.status == "failed" and failed_checks:
+            retries = 1
+            target = FAIL_MAP.get(failed_checks[0].name, "scorer")
+            print(f"⚠️  Verification failed ({vres.notes}). Retrying '{target}' with adjusted context...")
+            if target in active_reg:
+                rstops = {"stricter": True, "max_seconds": getattr(config, "score_max_seconds", 60)}
+                t_r = time.time()
+                r_res = active_reg[target]().run(config, storage, goal="Retry strictly", stop_conditions=rstops)
+                durations[f"{target}_retry"] = round(time.time() - t_r, 3)
+                print(f" * {target:<14} [RETRY] -> {r_res.notes}")
+
+            t_v2 = time.time()
+            vres2 = verifier.run(config, storage, context={"now": eval_now})
+            durations["verifier_retry"] = round(time.time() - t_v2, 3)
+            ran_results.append(vres2)
+            print(f" * verifier       [{vres2.status.upper()}] (post-retry) -> {vres2.notes}")
+            v_obj2 = getattr(vres2, "verdict", None)
+            failed_checks = getattr(v_obj2, "failed_checks", []) if v_obj2 else []
+            final_v_passed = (vres2.status != "failed")
+        else:
+            final_v_passed = (vres.status != "failed")
+
+        outcome = "degraded" if not final_v_passed else ("partial" if has_fail else "complete")
+        verdict_dict = {
+            "status": "pass" if final_v_passed else "fail", "passed": final_v_passed,
+            "failed_checks": [{"name": c.name, "observed": c.observed, "threshold": c.threshold, "message": c.message} for c in failed_checks],
+            "retry_count": retries,
+        }
+
+    summary = {
+        "plan": plan.render(), "ran": list(dict.fromkeys(r.agent for r in ran_results)),
         "skipped": {str(t.agent_name): t.reason for t in plan if t.skipped},
-        "durations": durations,
-        "outcome": outcome,
-        "overrides": overrides_applied,
+        "durations": durations, "outcome": outcome, "overrides": overrides, "verdict": verdict_dict,
     }
-    storage.log_cycle(
-        agent="orchestrator",
-        started_at=start_cycle_iso,
-        finished_at=end_cycle_iso,
-        records_touched=total_records,
-        status=outcome,
-        notes=json.dumps(summary_data),
-        db_path=config.db_path,
-    )
-
-    print("-" * 70)
-    print(f"CYCLE OUTCOME: {outcome.upper()} | Records Touched: {total_records}")
-    print("=" * 70)
+    storage.log_cycle(agent="orchestrator", started_at=start_iso, finished_at=datetime.now(timezone.utc).isoformat(),
+                      records_touched=total_recs, status=outcome, notes=json.dumps(summary), db_path=config.db_path)
+    print("-" * 70 + f"\nCYCLE OUTCOME: {outcome.upper()} | Records Touched: {total_recs}\n" + "=" * 70)
     return outcome

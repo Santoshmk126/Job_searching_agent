@@ -104,3 +104,26 @@ skill_aliases:
   tensorflow: "tensorflow"
   tf: "tensorflow"
 
+
+# ==============================================================================
+# VERIFICATION THRESHOLDS (Rule 39)
+# Every threshold below guards against a specific pipeline failure mode.
+# ==============================================================================
+
+# Catches score inflation/compression: fails if max-min score spread < 10
+min_score_spread: 10.0
+
+# Catches uniform score clustering: fails if score standard deviation < 5
+min_score_stdev: 5.0
+
+# Catches broken extractor returning empty required skills: fails if > 20% empty
+max_empty_extraction_pct: 0.20
+
+# Catches prompt explosion/hallucinated sentence dump: fails if listing has > 20 skills
+max_skills_per_listing: 20
+
+# Catches ranking a rumour: fails if top-ranked gap has < 3 listings
+min_gap_sample: 3
+
+# Catches stale pipeline ingestion: fails if newest fetched listing is > 3 days old
+max_data_age_days: 3.0

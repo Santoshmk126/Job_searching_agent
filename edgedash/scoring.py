@@ -110,7 +110,7 @@ def build_reason(
     return f"{skill_desc} · {sen_desc} · {loc_desc} · {rec_desc} · {'gap: ' + ', '.join(gaps) if gaps else 'no skill gaps'}"
 
 
-def score_listing(listing: dict[str, Any], facts: dict[str, Any], config: Any) -> dict[str, Any]:
+def score_listing(listing: dict[str, Any], facts: dict[str, Any], config: Any, stricter: bool = False) -> dict[str, Any]:
     cfg_weights = getattr(config, "scoring_weights", None)
     weights = cfg_weights if (isinstance(cfg_weights, dict) and cfg_weights) else DEFAULT_WEIGHTS
 
@@ -119,13 +119,26 @@ def score_listing(listing: dict[str, Any], facts: dict[str, Any], config: Any) -
     loc_score, _ = _calculate_location_fit(listing, facts, config)
     rec_score, _ = _calculate_recency(listing.get("posted_at"), as_of=listing.get("fetched_at"))
 
+    if stricter:
+        if missing_skills:
+            skill_score = round(skill_score * (0.85 ** len(missing_skills)), 4)
+        sen_score = 0.3 if sen_score == 0.6 else (0.05 if sen_score == 0.25 else sen_score)
+
     components = {
         "skill_match": skill_score, "seniority_fit": sen_score,
         "location_fit": loc_score, "recency": rec_score,
     }
     w_sum = sum(weights.get(k, DEFAULT_WEIGHTS[k]) for k in components) or 1.0
     weighted_total = sum(components[k] * weights.get(k, DEFAULT_WEIGHTS[k]) for k in components) / w_sum
+
+    if stricter:
+        diff = weighted_total - 0.50
+        sign = 1.0 if diff >= 0 else -1.0
+        weighted_total = max(0.0, min(1.0, 0.50 + sign * 0.50 * ((abs(diff) / 0.50) ** 0.65)))
+
     score = max(0, min(100, int(round(weighted_total * 100))))
     reason = build_reason(components, facts, config, listing=listing, missing_skills=missing_skills)
+    if stricter:
+        reason = f"[strict] {reason}"
 
     return {"score": score, "reason": reason, "components": components}

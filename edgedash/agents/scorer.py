@@ -29,7 +29,10 @@ class Scorer(Agent):
             if stop_conditions and "max_seconds" in stop_conditions
             else getattr(config, "score_max_seconds", 60)
         )
+        stricter = bool(stop_conditions and stop_conditions.get("stricter"))
         unscored = store.get_unscored_listings(limit=batch_size, db_path=config.db_path)
+        if not unscored and stricter:
+            unscored = store.get_listings(limit=batch_size, db_path=config.db_path)
 
         if not unscored:
             return AgentResult(
@@ -58,7 +61,7 @@ class Scorer(Agent):
                 else:
                     cache_misses += 1
                 facts = extract(listing, db_path=config.db_path)
-                result = score_listing(listing, facts, config)
+                result = score_listing(listing, facts, config, stricter=stricter)
                 score = result["score"]
                 reason = result["reason"]
                 store.update_listing_score(lid, score, reason, components=result.get("components"), db_path=config.db_path)
