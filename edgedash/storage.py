@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import hashlib, json, sqlite3
 from pathlib import Path
 from typing import Any
@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS skill_gaps (
 CREATE TABLE IF NOT EXISTS cycle_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT, agent TEXT NOT NULL, started_at TEXT NOT NULL,
     finished_at TEXT NOT NULL, records_touched INTEGER NOT NULL, status TEXT NOT NULL, notes TEXT
+);
+CREATE TABLE IF NOT EXISTS query_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, question TEXT NOT NULL, tool_chosen TEXT,
+    params TEXT, is_answerable BOOLEAN NOT NULL, duration_ms REAL NOT NULL, created_at TEXT NOT NULL
 );
 """
 
@@ -152,9 +156,13 @@ def save_skill_gaps_snapshot(run_id: str, computed_at: str, gaps: list[dict[str,
         return len(gaps)
 
 
-def get_latest_skill_gaps(limit: int = 10, db_path: str | None = None) -> list[dict[str, Any]]:
+def get_latest_skill_gaps(limit: int = 10, as_of: str | None = None, db_path: str | None = None) -> list[dict[str, Any]]:
+    """Return latest skill gaps, optionally scoped to as_of timestamp (Rule 38)."""
     with _get_connection(db_path) as conn:
-        latest = conn.execute("SELECT run_id FROM skill_gaps ORDER BY id DESC LIMIT 1").fetchone()
+        if as_of:
+            latest = conn.execute("SELECT run_id FROM skill_gaps WHERE computed_at <= ? ORDER BY id DESC LIMIT 1", (as_of,)).fetchone()
+        else:
+            latest = conn.execute("SELECT run_id FROM skill_gaps ORDER BY id DESC LIMIT 1").fetchone()
         if not latest:
             return []
         return get_snapshot_gaps(latest[0], limit=limit, db_path=db_path)
@@ -266,17 +274,337 @@ def get_recent_cycles(limit: int = 30, agent: str | None = "orchestrator", db_pa
         return result
 
 
-def get_listing_counts(db_path: str | None = None) -> tuple[int, int]:
-    """Return (total_listings, total_scored)."""
+def get_listing_counts(as_of: str | None = None, db_path: str | None = None) -> tuple[int, int]:
+    """Return (total_listings, total_scored), strictly scoped to as_of verified timestamp if provided (Rule 38)."""
     with _get_connection(db_path) as conn:
-        total = conn.execute("SELECT COUNT(*) FROM listings").fetchone()[0]
-        scored = conn.execute("SELECT COUNT(*) FROM listings WHERE fit_score IS NOT NULL").fetchone()[0]
+        if as_of:
+            total = conn.execute("SELECT COUNT(*) FROM listings WHERE fetched_at <= ?", (as_of,)).fetchone()[0]
+            scored = conn.execute("SELECT COUNT(*) FROM listings WHERE fit_score IS NOT NULL AND (scored_at <= ? OR (scored_at IS NULL AND fetched_at <= ?))", (as_of, as_of)).fetchone()[0]
+        else:
+            total = conn.execute("SELECT COUNT(*) FROM listings").fetchone()[0]
+            scored = conn.execute("SELECT COUNT(*) FROM listings WHERE fit_score IS NOT NULL").fetchone()[0]
         return int(total), int(scored)
 
 
-def get_top_scored_listings(limit: int = 10, db_path: str | None = None) -> list[dict[str, Any]]:
-    """Return top scored listings ordered by score descending."""
-    sql = "SELECT id, title, company, location, fit_score, fit_reason, url, posted_at FROM listings WHERE fit_score IS NOT NULL ORDER BY fit_score DESC, posted_at DESC LIMIT ?"
+def get_top_scored_listings(limit: int = 10, as_of: str | None = None, db_path: str | None = None) -> list[dict[str, Any]]:
+    """Return top scored listings ordered by score descending, scoped to as_of if provided (Rule 38)."""
+    if as_of:
+        sql = "SELECT id, title, company, location, fit_score, fit_reason, url, posted_at FROM listings WHERE fit_score IS NOT NULL AND (scored_at <= ? OR (scored_at IS NULL AND fetched_at <= ?)) ORDER BY fit_score DESC, posted_at DESC LIMIT ?"
+        params = (as_of, as_of, limit)
+    else:
+        sql = "SELECT id, title, company, location, fit_score, fit_reason, url, posted_at FROM listings WHERE fit_score IS NOT NULL ORDER BY fit_score DESC, posted_at DESC LIMIT ?"
+        params = (limit,)
     with _get_connection(db_path) as conn:
-        return [dict(r) for r in conn.execute(sql, (limit,)).fetchall()]
+        return [dict(r) for r in conn.execute(sql, params).fetchall()]
 
+
+def rollback_unverified_cycle(started_at_iso: str, db_path: str | None = None) -> None:
+    """Purge unverified data generated during a failed cycle (Rule 38)."""
+    with _get_connection(db_path) as conn:
+        conn.execute("DELETE FROM skill_gaps WHERE computed_at >= ?", (started_at_iso,))
+        conn.execute(
+            "UPDATE listings SET fit_score = NULL, fit_reason = NULL, scored_at = NULL, fit_components = NULL WHERE scored_at >= ?",
+            (started_at_iso,)
+        )
+        conn.execute("DELETE FROM listings WHERE fetched_at >= ?", (started_at_iso,))
+
+
+def log_query(
+    question: str,
+    tool_chosen: str | None,
+    params: dict[str, Any] | None,
+    is_answerable: bool,
+    duration_ms: float,
+    db_path: str | None = None,
+) -> None:
+    """Log user natural language query to query_log table (Rule 5 & Point 5)."""
+    now_iso = datetime.now(timezone.utc).isoformat()
+    params_json = json.dumps(params) if params else None
+    with _get_connection(db_path) as conn:
+        conn.execute(
+            """
+            INSERT INTO query_log (question, tool_chosen, params, is_answerable, duration_ms, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (question, tool_chosen, params_json, 1 if is_answerable else 0, duration_ms, now_iso),
+        )
+
+
+def get_companies_hiring(
+    days: int = 7, as_of: str | None = None, db_path: str | None = None
+) -> tuple[list[dict[str, Any]], int]:
+    """Return companies and listing counts within last N days scoped to as_of (Rule 2, 46)."""
+    ref_dt = datetime.fromisoformat(as_of.replace("Z", "+00:00")) if as_of else datetime.now(timezone.utc)
+    cutoff_iso = (ref_dt - timedelta(days=days)).isoformat()
+
+    with _get_connection(db_path) as conn:
+        base_filter = "WHERE COALESCE(posted_at, fetched_at) >= ?"
+        params: list[Any] = [cutoff_iso]
+        if as_of:
+            base_filter += " AND fetched_at <= ?"
+            params.append(as_of)
+
+        total_sql = f"SELECT COUNT(*) FROM listings {base_filter}"
+        total_examined = int(conn.execute(total_sql, tuple(params)).fetchone()[0])
+
+        group_sql = f"""
+            SELECT company, COUNT(*) as listing_count
+            FROM listings
+            {base_filter}
+            GROUP BY company
+            ORDER BY listing_count DESC, company ASC
+        """
+        rows = [dict(r) for r in conn.execute(group_sql, tuple(params)).fetchall()]
+        return rows, total_examined
+
+
+def get_best_matches(
+    n: int = 10, as_of: str | None = None, db_path: str | None = None
+) -> tuple[list[dict[str, Any]], int]:
+    """Return highest-scoring listings with score, title, company, reason (Rule 46)."""
+    with _get_connection(db_path) as conn:
+        base_filter = "WHERE fit_score IS NOT NULL"
+        params: list[Any] = []
+        if as_of:
+            base_filter += " AND (scored_at <= ? OR (scored_at IS NULL AND fetched_at <= ?))"
+            params.extend([as_of, as_of])
+
+        total_sql = f"SELECT COUNT(*) FROM listings {base_filter}"
+        total_examined = int(conn.execute(total_sql, tuple(params)).fetchone()[0])
+
+        query = f"""
+            SELECT id, fit_score, title, company, location, fit_reason, url
+            FROM listings
+            {base_filter}
+            ORDER BY fit_score DESC, posted_at DESC
+            LIMIT ?
+        """
+        params.append(n)
+        rows = [dict(r) for r in conn.execute(query, tuple(params)).fetchall()]
+        return rows, total_examined
+
+
+def get_top_gaps(
+    n: int = 5, as_of: str | None = None, db_path: str | None = None
+) -> tuple[list[dict[str, Any]], int]:
+    """Return top skill gaps by opportunity cost, with listings_blocked (Rule 46)."""
+    gaps = get_latest_skill_gaps(limit=n, as_of=as_of, db_path=db_path)
+    clean_rows = [
+        {
+            "skill": g["skill"],
+            "opportunity_cost": round(float(g["opportunity_cost"]), 1),
+            "listings_blocked": int(g["listings_blocked"]),
+            "top_score": int(g.get("top_score", 0)),
+            "mean_score": round(float(g.get("mean_score", 0.0)), 1),
+        }
+        for g in gaps
+    ]
+    return clean_rows, len(clean_rows)
+
+
+def get_gap_detail(
+    skill: str, as_of: str | None = None, db_path: str | None = None
+) -> tuple[list[dict[str, Any]], int]:
+    """Listings blocked by one named skill — rule 26's drill-down (Rule 46)."""
+    with _get_connection(db_path) as conn:
+        base_filter = "WHERE fit_score IS NOT NULL"
+        params: list[Any] = []
+        if as_of:
+            base_filter += " AND (scored_at <= ? OR (scored_at IS NULL AND fetched_at <= ?))"
+            params.extend([as_of, as_of])
+
+        query = f"SELECT id, title, company, fit_score, fit_reason, description, url FROM listings {base_filter} ORDER BY fit_score DESC"
+        rows = conn.execute(query, tuple(params)).fetchall()
+
+        matched_listings: list[dict[str, Any]] = []
+        target = skill.strip().lower()
+
+        for r in rows:
+            h = hashlib.sha256((r["description"] or "").strip().encode("utf-8")).hexdigest()
+            crow = conn.execute("SELECT extracted_data FROM extraction_cache WHERE description_hash = ?", (h,)).fetchone()
+            if crow and crow[0]:
+                try:
+                    facts = json.loads(crow[0])
+                    all_skills = [s.strip().lower() for s in facts.get("required_skills", []) + facts.get("nice_to_have", [])]
+                    if target in all_skills:
+                        matched_listings.append({
+                            "id": r["id"],
+                            "title": r["title"],
+                            "company": r["company"],
+                            "fit_score": r["fit_score"],
+                            "fit_reason": r["fit_reason"],
+                            "url": r["url"],
+                        })
+                except Exception:
+                    continue
+
+        return matched_listings, len(rows)
+
+
+def get_trend(
+    weeks: int = 3, as_of: str | None = None, db_path: str | None = None
+) -> tuple[list[dict[str, Any]], int]:
+    """Gap opportunity_cost change over N weeks from snapshots (Rule 46)."""
+    ref_dt = datetime.fromisoformat(as_of.replace("Z", "+00:00")) if as_of else datetime.now(timezone.utc)
+    cutoff_iso = (ref_dt - timedelta(weeks=weeks)).isoformat()
+
+    with _get_connection(db_path) as conn:
+        runs = conn.execute(
+            "SELECT DISTINCT run_id, computed_at FROM skill_gaps WHERE computed_at >= ? AND computed_at <= ? ORDER BY computed_at ASC",
+            (cutoff_iso, as_of or datetime.now(timezone.utc).isoformat())
+        ).fetchall()
+
+        if len(runs) < 2:
+            latest = get_latest_skill_gaps(limit=10, as_of=as_of, db_path=db_path)
+            rows = [
+                {
+                    "skill": g["skill"],
+                    "current_cost": round(float(g["opportunity_cost"]), 1),
+                    "previous_cost": round(float(g["opportunity_cost"]), 1),
+                    "change": 0.0,
+                    "listings_blocked": int(g["listings_blocked"]),
+                }
+                for g in latest
+            ]
+            return rows, len(runs)
+
+        first_run, last_run = runs[0]["run_id"], runs[-1]["run_id"]
+        gaps_first = {g["skill"]: float(g["opportunity_cost"]) for g in get_snapshot_gaps(first_run, limit=50, db_path=db_path)}
+        gaps_last = {g["skill"]: g for g in get_snapshot_gaps(last_run, limit=50, db_path=db_path)}
+
+        trend_rows: list[dict[str, Any]] = []
+        for skill, g in gaps_last.items():
+            curr = float(g["opportunity_cost"])
+            prev = gaps_first.get(skill, 0.0)
+            diff = curr - prev
+            trend_rows.append({
+                "skill": skill,
+                "current_cost": round(curr, 1),
+                "previous_cost": round(prev, 1),
+                "change": round(diff, 1),
+                "listings_blocked": int(g["listings_blocked"]),
+            })
+        trend_rows.sort(key=lambda x: abs(x["change"]), reverse=True)
+        return trend_rows, len(runs)
+
+
+def get_listing_count_stats(
+    as_of: str | None = None, db_path: str | None = None
+) -> dict[str, Any]:
+    """Totals: listings, scored, unscored, newest listing date (Rule 46)."""
+    with _get_connection(db_path) as conn:
+        filter_sql = "WHERE fetched_at <= ?" if as_of else ""
+        params = (as_of,) if as_of else ()
+
+        total = int(conn.execute(f"SELECT COUNT(*) FROM listings {filter_sql}", params).fetchone()[0])
+        scored_filter = "WHERE fit_score IS NOT NULL" + (" AND (scored_at <= ? OR (scored_at IS NULL AND fetched_at <= ?))" if as_of else "")
+        scored_params = (as_of, as_of) if as_of else ()
+        scored = int(conn.execute(f"SELECT COUNT(*) FROM listings {scored_filter}", scored_params).fetchone()[0])
+        unscored = total - scored
+        newest = conn.execute(f"SELECT MAX(COALESCE(posted_at, fetched_at)) FROM listings {filter_sql}", params).fetchone()[0]
+
+        return {
+            "total_listings": total,
+            "scored_listings": scored,
+            "unscored_listings": unscored,
+            "newest_listing_date": str(newest) if newest else None,
+        }
+
+
+def get_skill_demand(
+    skill: str, as_of: str | None = None, db_path: str | None = None
+) -> tuple[dict[str, Any], int]:
+    """How often one skill appears in required vs nice_to_have (Rule 46)."""
+    with _get_connection(db_path) as conn:
+        filter_sql = "WHERE fit_score IS NOT NULL" + (" AND (scored_at <= ? OR (scored_at IS NULL AND fetched_at <= ?))" if as_of else "")
+        params = (as_of, as_of) if as_of else ()
+        rows = conn.execute(f"SELECT description FROM listings {filter_sql}", params).fetchall()
+
+        req_count = 0
+        nice_count = 0
+        target = skill.strip().lower()
+
+        for r in rows:
+            h = hashlib.sha256((r["description"] or "").strip().encode("utf-8")).hexdigest()
+            crow = conn.execute("SELECT extracted_data FROM extraction_cache WHERE description_hash = ?", (h,)).fetchone()
+            if crow and crow[0]:
+                try:
+                    facts = json.loads(crow[0])
+                    req_skills = [s.strip().lower() for s in facts.get("required_skills", [])]
+                    nice_skills = [s.strip().lower() for s in facts.get("nice_to_have", [])]
+                    if target in req_skills:
+                        req_count += 1
+                    elif target in nice_skills:
+                        nice_count += 1
+                except Exception:
+                    continue
+
+        res = {
+            "skill": skill,
+            "required_count": req_count,
+            "nice_to_have_count": nice_count,
+            "total_mentions": req_count + nice_count,
+            "total_listings_examined": len(rows),
+        }
+        return res, len(rows)
+
+
+def get_known_skills(db_path: str | None = None) -> set[str]:
+    """Return all distinct skill names currently present in the database (Rule 41)."""
+    known = set()
+    with _get_connection(db_path) as conn:
+        for r in conn.execute("SELECT DISTINCT skill FROM skill_gaps").fetchall():
+            if r[0]:
+                known.add(str(r[0]).strip().lower())
+        for r in conn.execute("SELECT extracted_data FROM extraction_cache").fetchall():
+            if r[0]:
+                try:
+                    d = json.loads(r[0])
+                    for s in d.get("required_skills", []) + d.get("nice_to_have", []):
+                        if s:
+                            known.add(str(s).strip().lower())
+                except Exception:
+                    continue
+    return known
+
+
+def get_daily_query_count(db_path: str | None = None) -> int:
+    """Return count of queries executed today in UTC (Abuse Guard)."""
+    now_utc = datetime.now(timezone.utc)
+    start_of_day = now_utc.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    with _get_connection(db_path) as conn:
+        res = conn.execute("SELECT COUNT(*) FROM query_log WHERE created_at >= ?", (start_of_day,)).fetchone()
+        return int(res[0]) if res else 0
+
+
+
+
+
+def get_location_breakdown(
+    limit: int = 10, as_of: str | None = None, db_path: str | None = None
+) -> tuple[list[dict[str, Any]], int]:
+    """Return top job locations with counts and average fit score scoped to as_of (Rule 2, 46)."""
+    with _get_connection(db_path) as conn:
+        base_filter = "WHERE location IS NOT NULL AND location != ''"
+        params: list[Any] = []
+        if as_of:
+            base_filter += " AND fetched_at <= ?"
+            params.append(as_of)
+
+        total_sql = f"SELECT COUNT(*) FROM listings {base_filter}"
+        total_examined = int(conn.execute(total_sql, tuple(params)).fetchone()[0])
+
+        group_sql = f"""
+            SELECT 
+                location, 
+                COUNT(*) as listing_count,
+                ROUND(AVG(CASE WHEN fit_score IS NOT NULL THEN fit_score ELSE NULL END), 1) as avg_fit_score
+            FROM listings
+            {base_filter}
+            GROUP BY location
+            ORDER BY listing_count DESC, location ASC
+            LIMIT ?
+        """
+        params.append(limit)
+        rows = [dict(r) for r in conn.execute(group_sql, tuple(params)).fetchall()]
+        return rows, total_examined

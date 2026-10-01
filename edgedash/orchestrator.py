@@ -114,7 +114,11 @@ def run_cycle(config: Config, now: datetime | None = None, dry_run: bool = False
         else:
             final_v_passed = (vres.status != "failed")
 
-        outcome = "degraded" if not final_v_passed else ("partial" if has_fail else "complete")
+        if not final_v_passed:
+            outcome = "degraded"
+            storage.rollback_unverified_cycle(start_iso, db_path=config.db_path)
+        else:
+            outcome = "partial" if has_fail else "complete" 
         verdict_dict = {
             "status": "pass" if final_v_passed else "fail", "passed": final_v_passed,
             "failed_checks": [{"name": c.name, "observed": c.observed, "threshold": c.threshold, "message": c.message} for c in failed_checks],

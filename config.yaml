@@ -127,3 +127,7 @@ min_gap_sample: 3
 
 # Catches stale pipeline ingestion: fails if newest fetched listing is > 3 days old
 max_data_age_days: 3.0
+
+# Abuse Guard: Maximum total natural language queries permitted per calendar day (UTC)
+daily_query_cap: 200
+

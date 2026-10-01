@@ -1,4 +1,5 @@
 import json
+import urllib.parse
 from datetime import datetime
 from typing import Any
 import streamlit as st
@@ -28,12 +29,16 @@ st.markdown("""
 
 @st.cache_data(ttl=5)
 def load_data(db_path: str):
-    """Load all cycle, listing, and gap records strictly through storage module (Rule 2)."""
+    """Load records strictly through storage module, scoping data panels to the last passing cycle (Rule 2 & 38)."""
     cycles = storage.get_recent_cycles(limit=30, agent="orchestrator", db_path=db_path)
     latest_verified = storage.get_latest_verified_cycle(db_path=db_path)
-    total_listings, total_scored = storage.get_listing_counts(db_path=db_path)
-    top_listings = storage.get_top_scored_listings(limit=10, db_path=db_path)
-    top_gaps = storage.get_latest_skill_gaps(limit=10, db_path=db_path)
+
+    # Rule 38: Every data panel reads from the LAST PASSING CYCLE only!
+    verified_as_of = latest_verified.get("finished_at") if latest_verified else None
+
+    total_listings, total_scored = storage.get_listing_counts(as_of=verified_as_of, db_path=db_path)
+    top_listings = storage.get_top_scored_listings(limit=10, as_of=verified_as_of, db_path=db_path)
+    top_gaps = storage.get_latest_skill_gaps(limit=10, as_of=verified_as_of, db_path=db_path)
     return cycles, latest_verified, total_listings, total_scored, top_listings, top_gaps
 
 
@@ -74,9 +79,9 @@ def main():
         verified_ts = latest_verified.get("finished_at") if latest_verified else None
         st.metric("Last Verified Cycle", format_ts(verified_ts))
     with c2:
-        st.metric("Total Listings", f"{total_listings:,}")
+        st.metric("Total Listings (Verified)", f"{total_listings:,}")
     with c3:
-        st.metric("Total Scored", f"{total_scored:,}")
+        st.metric("Total Scored (Verified)", f"{total_scored:,}")
     with c4:
         v_label = "PASSING" if verdict_passed else ("DEGRADED" if latest_status == "degraded" else "FAILED")
         st.metric("Current Verdict Status", v_label)
@@ -185,13 +190,22 @@ def main():
                 url = item.get("url")
                 reason = item.get("fit_reason", "No reason recorded")
 
-                link_md = f"[{title}]({url})" if url else title
-                card_html = (
-                    f"**`[{score:02d}/100]`** {link_md} — *{company}*\n\n"
-                    f"<span style='color: #9ca3af; font-size: 13px;'>{reason}</span>"
+                # Ensure URL is valid, actionable, and never dead example.com
+                if not url or "example.com" in url:
+                    search_query = f"{company} {title} jobs"
+                    url = f"https://www.google.com/search?q={urllib.parse.quote_plus(search_query)}"
+
+                link_html = f'<a href="{url}" target="_blank" rel="noopener noreferrer" style="color: #60a5fa; text-decoration: underline; font-weight: 600;">{title} ↗</a>'
+                badge_color = "#16a34a" if score >= 80 else ("#2563eb" if score >= 60 else "#eab308")
+
+                st.markdown(
+                    f'<div style="margin-bottom: 12px; padding: 10px 12px; background: rgba(30, 41, 59, 0.4); border-radius: 6px; border: 1px solid #334155;">'
+                    f'<span style="background-color: {badge_color}; color: white; padding: 2px 7px; border-radius: 4px; font-weight: 700; font-size: 11px; margin-right: 8px;">{score:02d}/100</span>'
+                    f'{link_html} — <span style="color: #cbd5e1; font-style: italic;">{company}</span>'
+                    f'<div style="color: #94a3b8; font-size: 12px; margin-top: 5px; line-height: 1.4;">{reason}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
                 )
-                st.markdown(card_html, unsafe_allow_html=True)
-                st.write("")
 
     with col_right:
         st.subheader("📊 Top 10 Market Skill Gaps (Verified)")
@@ -209,6 +223,73 @@ def main():
                 })
             st.dataframe(gap_data, use_container_width=True, hide_index=True)
 
+    st.markdown("---")
+
+    # =========================================================================
+    # SECTION 4: ASK YOUR DATA (Rules 40-45 & Abuse Guards)
+    # =========================================================================
+    st.subheader("💬 Ask Your Data")
+    st.caption("Ask questions in plain English. Queries are routed to verified parameterised tools — no raw SQL, no hallucinations.")
+
+    from edgedash.query.guards import check_daily_cap
+    is_cap_exceeded, current_count, cap = check_daily_cap(config)
+
+    if is_cap_exceeded:
+        st.warning(
+            f"🔒 **Daily Question Cap Reached ({current_count}/{cap})**: "
+            "To safeguard API quotas on this public deployment, the natural language ask box is temporarily disabled. "
+            "It will reopen automatically at midnight UTC. All verified data panels and tables above remain fully operational."
+        )
+    else:
+        import uuid
+        session_id = st.session_state.setdefault("session_id", uuid.uuid4().hex)
+
+        # 3 Example Buttons (Point 6: first thing a visitor does works)
+        ex_cols = st.columns(3)
+        clicked_query = None
+        with ex_cols[0]:
+            if st.button("🏢 Which companies are hiring?", use_container_width=True):
+                clicked_query = "Which companies are hiring in the last 14 days?"
+        with ex_cols[1]:
+            if st.button("🎯 What are my top job matches?", use_container_width=True):
+                clicked_query = "What are my top 5 job matches?"
+        with ex_cols[2]:
+            if st.button("📉 What are my top skill gaps?", use_container_width=True):
+                clicked_query = "What are my top 5 skill gaps by opportunity cost?"
+
+        if "current_question" not in st.session_state:
+            st.session_state["current_question"] = ""
+
+        if clicked_query:
+            st.session_state["current_question"] = clicked_query
+
+        user_query = st.text_input(
+            "Ask a question about jobs, skills, or hiring trends:",
+            value=st.session_state["current_question"],
+            placeholder="e.g. Which companies are hiring recently? or What are my top skill gaps?",
+            max_chars=300,
+        )
+
+        run_submitted = st.button("Ask EdgeDash", type="primary")
+
+        if run_submitted or clicked_query:
+            active_q = clicked_query or user_query
+            if active_q.strip():
+                with st.spinner("Analyzing verified career data..."):
+                    from edgedash.query.ask import ask
+                    ans = ask(active_q.strip(), session_id=session_id, config=config)
+
+                st.markdown("#### 💡 Answer")
+                st.info(ans.text)
+
+                # Rule 44: Every answer displays the underlying rows alongside it
+                if ans.rows:
+                    st.markdown("#### 📋 Underlying Data Records (Rule 44)")
+                    st.dataframe(ans.rows, use_container_width=True, hide_index=True)
+                elif ans.tool_used is not None:
+                    st.caption("No matching records returned by this query tool.")
+
 
 if __name__ == "__main__":
     main()
+

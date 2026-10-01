@@ -42,6 +42,7 @@ class Config:
     max_skills_per_listing: int = 20
     min_gap_sample: int = 3
     max_data_age_days: float = 3.0
+    daily_query_cap: int = 200
 
 
 def load_config(path: str | Path = "config.yaml") -> Config:
@@ -94,4 +95,5 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         max_skills_per_listing=int(data.get("max_skills_per_listing", 20)),
         min_gap_sample=int(data.get("min_gap_sample", 3)),
         max_data_age_days=float(data.get("max_data_age_days", 3.0)),
+        daily_query_cap=int(data.get("daily_query_cap", 200)),
     )

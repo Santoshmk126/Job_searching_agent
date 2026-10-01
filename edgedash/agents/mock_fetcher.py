@@ -1,3 +1,4 @@
+import urllib.parse
 from datetime import datetime, timezone
 from typing import Any
 import uuid
@@ -20,7 +21,7 @@ class MockFetcher(Agent):
                 "title": f"Junior {role}",
                 "company": "DataBridge Analytics",
                 "location": city,
-                "url": f"https://jobs.example.com/stable/{city.lower()}/databridge-101",
+                "url": f"https://www.google.com/search?q=DataBridge+Analytics+Junior+AI+Engineer+jobs",
                 "description": "Looking for entry-level analyst proficient in SQL, Python, and Excel for reporting.",
                 "source": "mock_board",
                 "posted_at": "2026-09-20T09:00:00Z",
@@ -30,7 +31,7 @@ class MockFetcher(Agent):
                 "title": f"{role}",
                 "company": "RetailPulse Tech",
                 "location": city,
-                "url": f"https://jobs.example.com/stable/{city.lower()}/retailpulse-102",
+                "url": f"https://www.google.com/search?q=RetailPulse+Tech+AI+Machine+Learning+Engineer+jobs",
                 "description": "Mid-level position building Power BI dashboards and automating ETL with Python & Pandas.",
                 "source": "mock_board",
                 "posted_at": "2026-09-21T10:30:00Z",
@@ -40,7 +41,7 @@ class MockFetcher(Agent):
                 "title": f"Senior {role}",
                 "company": "CloudScale Insights",
                 "location": city,
-                "url": f"https://jobs.example.com/stable/{city.lower()}/cloudscale-103",
+                "url": f"https://www.google.com/search?q=CloudScale+Insights+Senior+AI+Machine+Learning+Engineer+jobs",
                 "description": "Senior contributor needed for Tableau reporting, advanced SQL, and data warehouse modeling.",
                 "source": "mock_board",
                 "posted_at": "2026-09-22T14:15:00Z",
@@ -50,7 +51,7 @@ class MockFetcher(Agent):
                 "title": f"Lead {role} & BI Specialist",
                 "company": "FinPeak Systems",
                 "location": city,
-                "url": f"https://jobs.example.com/stable/{city.lower()}/finpeak-104",
+                "url": f"https://www.google.com/search?q=FinPeak+Systems+Lead+AI+Engineer+jobs",
                 "description": "Lead analytics team, drive KPI strategy using SQL, dbt, Snowflake, and Power BI.",
                 "source": "mock_board",
                 "posted_at": "2026-09-23T11:00:00Z",
